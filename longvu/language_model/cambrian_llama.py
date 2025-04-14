@@ -39,14 +39,15 @@ from transformers.modeling_outputs import (
     BaseModelOutputWithPast,
     CausalLMOutputWithPast,
 )
-from transformers.utils import logging
+from transformers.utils import logging as lgging
 
 from ..cambrian_arch import CambrianMetaForCausalLM, CambrianMetaModel
 
 IS_XLA_AVAILABLE = False
 
-logger = logging.get_logger(__name__)
+logger = lgging.get_logger(__name__)
 
+import logging
 
 class CambrianConfig(LlamaConfig):
     model_type = "cambrian_llama"
@@ -77,6 +78,13 @@ class CambrianLlamaModel(CambrianMetaModel, LlamaModel):
         final_vision_feature_size: Optional[List[tuple]] = None,
         global_context_feature: Optional[torch.Tensor] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
+
+        if inputs_embeds is not None:
+            logging.info(f"@tcm: In CambrianLlamaModel.forward(): inputs_embeds.shape: {inputs_embeds.shape}")
+        if position_ids is not None:
+            logging.info(f"@tcm: In CambrianLlamaModel.forward(): position_ids.shape: {position_ids.shape}")
+        if attention_mask is not None:
+            logging.info(f"@tcm: In CambrianLlamaModel.forward(): attention_mask.shape: {attention_mask.shape}")
 
         output_attentions = (
             output_attentions
