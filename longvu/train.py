@@ -1020,7 +1020,8 @@ def train() -> None:
             # for p in model.get_model().mm_projector.parameters():
             #     p.requires_grad = True
             tune_modules = [
-                "mm_projector",
+                "mm_projector_aux_0.0.bias", # try smallest layer
+                # "mm_projector",
                 # "pos_emb",
                 # "vision_sampler",
                 # "vision_sampler_layers",
