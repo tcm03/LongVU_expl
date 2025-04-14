@@ -836,7 +836,7 @@ def train() -> None:
 
     # pyre-fixme[16]: `DataClass` has no attribute `vision_tower`.
     if model_args.vision_tower_aux_list is not None:
-        if "cambrian" in model_args.input_model_filename.lower():
+        if "cambrian" in model_args.input_model_filename.lower() or "longvu" in model_args.input_model_filename.lower():
             if "qwen" in model_args.input_model_filename.lower():
                 model = CambrianQwenForCausalLM.from_pretrained(  # pyre-fixme
                     model_args.input_model_filename,  # pyre-fixme
