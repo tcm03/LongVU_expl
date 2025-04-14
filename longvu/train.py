@@ -815,6 +815,11 @@ def make_supervised_data_module(
         train_dataset=train_dataset, eval_dataset=None, data_collator=data_collator
     )
 
+def print_trainable(model):
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            print(f"Trainable parameter: {name}, size: {param.size()}")
+
 
 def train() -> None:
     dist.init_process_group(backend="nccl", timeout=datetime.timedelta(hours=8))
@@ -864,6 +869,7 @@ def train() -> None:
 
     # pyre-fixme[16]: `DataClass` has no attribute `freeze_backbone`.
     if model_args.freeze_backbone:
+        print("Freezing backbone...")
         model.model.requires_grad_(False)
 
     # pyre-fixme[16]: `DataClass` has no attribute `gradient_checkpointing`.
@@ -878,7 +884,8 @@ def train() -> None:
                 output.requires_grad_(True)
 
             model.get_input_embeddings().register_forward_hook(make_inputs_require_grad)
-
+    print("After gradient checkpointing\n")
+    print_trainable(model)
     tokenizer = transformers.AutoTokenizer.from_pretrained(
         model_args.input_model_filename,
         # pyre-fixme[16]: `DataClass` has no attribute `model_max_length`.
@@ -1053,16 +1060,15 @@ def train() -> None:
         model.config.is_st_sampler = model_args.is_st_sampler  # pyre-fixme
         data_args.image_token_len = model_args.image_token_len
         model.initialize_vision_tokenizer(model_args, tokenizer=tokenizer)
-
+    print("After vision tower initialization\n")
+    print_trainable(model)
     total_params = sum(p.numel() for p in model.get_model().parameters())
     trainable_params = sum(
         p.numel() for p in model.get_model().parameters() if p.requires_grad
     )
 
     model.to(torch.bfloat16)
-    for name, param in model.named_parameters():
-        if param.requires_grad:
-            print(f"Trainable parameter: {name}, size: {param.size()}")
+    print_trainable(model)
 
     # pyre-fixme
     def convert_bn_to_float(model):

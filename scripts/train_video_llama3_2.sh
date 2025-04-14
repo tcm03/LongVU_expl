@@ -41,8 +41,8 @@ longvu/train.py \
 --dataloader_num_workers 0 \
 --lazy_preprocess True \
 --tune_mm_mlp_adapter False \
---freeze_mm_mlp_adapter False \
---freeze_backbone False \
+--freeze_mm_mlp_adapter True \
+--freeze_backbone True \
 --gradient_checkpointing True \
 --mm_projector_type sva \
 --image_token_len 144 \
