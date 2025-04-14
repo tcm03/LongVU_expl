@@ -4,6 +4,9 @@
 
 # pyre-strict
 
+import sys
+sys.path.append('.')
+
 # Need to call this before importing transformers.
 
 
