@@ -1,10 +1,10 @@
 
-PREV_STAGE_CHECKPOINT=""
-PATH_TO_JSON=""
-PATH_TO_FOLDER=""
+PREV_STAGE_CHECKPOINT="./checkpoints/longvu_llama3_2"
+PATH_TO_JSON="/content/drive/MyDrive/Thesis/SnapUGC/train_tiny.json"
+PATH_TO_FOLDER="/content/drive/MyDrive/Thesis/SnapUGC"
 VERSION="llama3"
 
-CUDA_LAUNCH_BLOCKING=1 TORCH_DISTRIBUTED_DEBUG=DETAIL torchrun --nproc_per_node=8 --nnodes=8 \
+CUDA_LAUNCH_BLOCKING=1 TORCH_DISTRIBUTED_DEBUG=DETAIL torchrun --nproc_per_node=1 --nnodes=1 \
 longvu/train.py \
 --output_dir "/tmp/longvu/" \
 --input_model_filename $PREV_STAGE_CHECKPOINT \
@@ -43,8 +43,6 @@ longvu/train.py \
 --tune_mm_mlp_adapter False \
 --freeze_mm_mlp_adapter False \
 --freeze_backbone False \
---fsdp "full_shard auto_wrap" \
---fsdp_transformer_layer_cls_to_wrap 'LlamaDecoderLayer' \
 --gradient_checkpointing True \
 --mm_projector_type sva \
 --image_token_len 144 \
