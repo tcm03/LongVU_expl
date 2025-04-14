@@ -59,7 +59,7 @@ from transformers.integrations import TensorBoardCallback
 
 TENSORBOARD_LOG_DIR_NAME: str = "tensorboard_logs"
 
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:256"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
 @dataclass
 class ModelArguments:
     input_model_filename: Optional[str] = field(default=None)
@@ -1020,7 +1020,7 @@ def train() -> None:
             # for p in model.get_model().mm_projector.parameters():
             #     p.requires_grad = True
             tune_modules = [
-                "mm_projector_aux_0.0.bias", # try smallest layer
+                # "mm_projector_aux_0.0.bias", # try smallest layer
                 # "mm_projector",
                 # "pos_emb",
                 # "vision_sampler",
