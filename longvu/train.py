@@ -1060,6 +1060,9 @@ def train() -> None:
     )
 
     model.to(torch.bfloat16)
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            print(f"Trainable parameter: {name}, size: {param.size()}")
 
     # pyre-fixme
     def convert_bn_to_float(model):
@@ -1071,9 +1074,9 @@ def train() -> None:
 
     model = convert_bn_to_float(model)
 
-    os.environ[f"FSDP_USE_ORIG_PARAMS"] = "true"
+    # os.environ[f"FSDP_USE_ORIG_PARAMS"] = "true"
     # pyre-fixme[16]: `DataClass` has no attribute `fsdp_config`.
-    training_args.fsdp_config["use_orig_params"] = True
+    # training_args.fsdp_config["use_orig_params"] = True
     data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args)
 
     callbacks = []
