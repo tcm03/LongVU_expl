@@ -40,7 +40,7 @@ longvu/train.py \
 --group_by_modality_length True \
 --dataloader_num_workers 0 \
 --lazy_preprocess True \
---tune_mm_mlp_adapter False \
+--tune_mm_mlp_adapter True \
 --freeze_mm_mlp_adapter True \
 --freeze_backbone True \
 --gradient_checkpointing True \
