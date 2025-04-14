@@ -59,7 +59,7 @@ from transformers.integrations import TensorBoardCallback
 
 TENSORBOARD_LOG_DIR_NAME: str = "tensorboard_logs"
 
-
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:256"
 @dataclass
 class ModelArguments:
     input_model_filename: Optional[str] = field(default=None)
@@ -1021,11 +1021,11 @@ def train() -> None:
             #     p.requires_grad = True
             tune_modules = [
                 "mm_projector",
-                "pos_emb",
-                "vision_sampler",
-                "vision_sampler_layers",
-                "vision_query",
-                "image_newline",
+                # "pos_emb",
+                # "vision_sampler",
+                # "vision_sampler_layers",
+                # "vision_query",
+                # "image_newline",
             ]
             for name, param in model.named_parameters():
                 if any(listed_name in name for listed_name in tune_modules):
