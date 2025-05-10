@@ -33,6 +33,8 @@ from .multimodal_encoder.builder import build_vision_tower_aux_list
 from .multimodal_projector.builder import build_vision_projector
 from .vision_sampler import VisionTokenSampler
 
+import logging
+
 IS_XLA_AVAILABLE = False
 
 
@@ -131,11 +133,11 @@ class CambrianMetaModel:
 
                 self.vision_query = nn.Parameter(
                     torch.randn((num_query_group, vision_hidden_size), dtype=self.dtype)
-                )
+                ) # [1, 1024]
 
                 self.image_newline = nn.Parameter(
                     torch.empty(config.hidden_size, dtype=self.dtype)
-                )
+                ) # LLM_hidden_size, e.g. 3072 for Llama3.2 and 3584 for Qwen2
 
                 self.frame_pos = torch.stack(
                     [
@@ -811,6 +813,8 @@ class CambrianMetaForCausalLM(ABC):
                 None,
             )
 
+        # batch videos of same duration: [torch.Tensor([bs, # frames, C, H, W]), torch.Tensor([bs, # frames, C, H, W])]
+        # batch videos of diff duration: [[torch.Tensor([vid1 # frames, C, H, W]), ...], [torch.Tensor([vid1 # frames, C, H, W]), ...]]
         image_aux_list = images
 
         split_sizes = None
@@ -818,19 +822,20 @@ class CambrianMetaForCausalLM(ABC):
         if type(image_aux_list[0]) is list or image_aux_list[0].ndim == 5:
             split_sizes_ori = [
                 1 if image.ndim == 3 else image.shape[0] for image in image_aux_list[0]
-            ]
+            ] # [vid1 # frames, vid2 # frames, ...]
             new_image_aux_list = []
             for image_aux in image_aux_list:
                 if type(image_aux) is list:
                     image_aux = [
                         x.unsqueeze(0) if x.ndim == 3 else x for x in image_aux
                     ]
-                concat_image_aux = torch.cat([image for image in image_aux], dim=0)
+                concat_image_aux = torch.cat([image for image in image_aux], dim=0) # concat the batch to a super-video
                 new_image_aux_list.append(concat_image_aux)
+            # new_image_aux_list = [torch.Tensor([batch # frames, C, H, W]), torch.Tensor([batch # frames, C, H, W])]
             image_aux_features_dino = self.encode_images(
                 new_image_aux_list, encode_type="dino"
             )
-
+            # image_aux_features_dino = [batch # frames, 24*24, dino_hidden_size], dino_hidden_size = 1536
             (
                 image_aux_features_dino,
                 split_sizes,
@@ -844,32 +849,33 @@ class CambrianMetaForCausalLM(ABC):
                 image_sizes,
                 threshold=getattr(self.get_model().config, "dino_threshold", 0.83),
             )
-
+            # selected_frame_indices_all = [torch.Tensor([vid1 chosen frame1 idx, ...]), torch.Tensor([vid2 chosen frame1 idx, ...]), ...]
             image_aux_features_siglip = self.encode_images(
                 new_image_aux_list, encode_type="siglip"
             )
+            # # image_aux_features_siglip = [batch # frames, 24*24, siglip_hidden_size], siglip_hidden_size = 1152
             image_aux_features_list = [
                 image_aux_features_siglip,
                 image_aux_features_dino,
             ]
 
-            bs = image_aux_features_list[0].shape[0]
-            dtype = new_image_aux_list[0].dtype
+            bs = image_aux_features_list[0].shape[0] # batch # frames
+            dtype = new_image_aux_list[0].dtype # torch.float32
 
             frame_sizes = []
             for i in range(len(image_sizes)):
                 for j in range(split_sizes[i]):
                     frame_sizes.append(image_sizes[i])
-            image_sizes = frame_sizes
+            image_sizes = frame_sizes # [(H, W), ...] (len = batch # frames)
         else:
             image_aux_features_list = self.encode_images(image_aux_list)
             bs = image_aux_list[0].shape[0]
             dtype = image_aux_list[0].dtype
 
-        image_token_len = self.get_model().config.image_token_len
-        query_num_list = self.get_model().config.query_num_list
+        image_token_len = self.get_model().config.image_token_len # 144
+        query_num_list = self.get_model().config.query_num_list # [144]
 
-        final_height = final_width = int(image_token_len**0.5)
+        final_height = final_width = int(image_token_len**0.5) # 12
 
         final_image_features_list = []
         final_image_features_down_list = []
@@ -888,13 +894,14 @@ class CambrianMetaForCausalLM(ABC):
 
                 image_aux_features = getattr(
                     self.get_model(), "mm_projector_aux_{}".format(aux_i)
-                )(image_aux_features).to(dtype)
+                )(image_aux_features).to(dtype) # [batch # frames, 24*24, 1024]
                 if aux_i == 0:
                     global_context_feature = image_aux_features.mean(1).view(
                         bs, 1, 1, -1
-                    )
+                    ) # [batch # frames, 1, 1, 1024]
 
                 vision_tower_aux_feature_list.append(image_aux_features)
+            # vision_tower_aux_feature_list = [[batch # frames, 24*24, 1024], [batch # frames, 24*24, 1024]]
             input_mix_res = True
             input_high_res = True
             # perform vision sampling for each query group
@@ -904,11 +911,11 @@ class CambrianMetaForCausalLM(ABC):
                     .vision_query[query_group_i, :]
                     .view(1, 1, 1, -1)
                     .expand(bs, query_num, -1, -1)
-                )
+                ) # [batch # frames, 144, 1, 1024]
                 global_context_feature_i = global_context_feature.expand(
                     -1, query_num, 1, -1
-                ).flatten(0, 1)
-                query_side_len = int(query_num**0.5)
+                ).flatten(0, 1) # [batch # frames * 144, 1, 1024]
+                query_side_len = int(query_num**0.5) # 12
                 if IS_XLA_AVAILABLE:
                     (
                         vision_tower_aux_feature_list_i,
@@ -934,7 +941,7 @@ class CambrianMetaForCausalLM(ABC):
                     *vision_tower_aux_feature_list_i,
                     *vision_tower_aux_attention_masks_list_i,
                 )
-                query_features_i = query_features_i.view(bs, query_num, -1)
+                query_features_i = query_features_i.view(bs, query_num, -1) # [batch # frames, 144, 1024]
 
                 if split_sizes is not None:
                     try:
@@ -945,21 +952,21 @@ class CambrianMetaForCausalLM(ABC):
                     except:
                         text_len = len(input_ids[0])
                     max_visual_len = (
-                        self.get_model().config.tokenizer_model_max_length
+                        self.get_model().config.tokenizer_model_max_length # 8192
                         - text_len
                         - getattr(self.get_model().config, "inference_max_length", 16)
                     )
                     max_num_frames = max(
                         1,
                         math.floor(max_visual_len // (final_height * final_width)),
-                    )
+                    ) # max_num_frames: 69
                     max_num_frames_low = max(
                         1,
                         math.floor(
                             max_visual_len
                             // (self.get_model().config.lowres_token ** 2)
                         ),
-                    )
+                    ) # max_num_frames_low: 155
                     if split_sizes[0] < max_num_frames:
                         input_mix_res = False
                     elif split_sizes[0] > max_num_frames_low:
@@ -969,6 +976,7 @@ class CambrianMetaForCausalLM(ABC):
                 # input_mix_res = False  # ablation
 
                 if (getattr(self.config, "highres", False)) and input_mix_res:
+                    # downsample query feature maps from 12x12 to 8x8 by bilinear interpolation
                     _query_features_i = (
                         query_features_i.permute(0, 2, 1)
                         .contiguous()
@@ -985,8 +993,8 @@ class CambrianMetaForCausalLM(ABC):
                     ).to(dtype=query_features_i.dtype)
                     _query_features_i = (
                         _query_features_i.permute(0, 2, 3, 1).contiguous().flatten(1, 2)
-                    )
-                    final_image_features_down_list.append(_query_features_i)
+                    ) # [batch # frames, 8*8, 1024]
+                    final_image_features_down_list.append(_query_features_i) # [torch.Tensor([batch # frames, 8*8, 1024]), ...]
 
                 # interpolate to the final target size
                 if query_side_len != final_height:
@@ -1012,7 +1020,7 @@ class CambrianMetaForCausalLM(ABC):
                     query_features_i = (
                         query_features_i.permute(0, 2, 3, 1).contiguous().flatten(1, 2)
                     )
-                final_image_features_list.append(query_features_i)
+                final_image_features_list.append(query_features_i) # [torch.Tensor([batch # frames, 12*12, 1024]), ...]
 
             if IS_XLA_AVAILABLE:
                 (
@@ -1029,14 +1037,14 @@ class CambrianMetaForCausalLM(ABC):
         else:
             final_image_features_list = image_aux_features_list
 
-        image_features = torch.cat(final_image_features_list, -1)
-        image_features = self.get_model().mm_projector(image_features).to(dtype)
+        image_features = torch.cat(final_image_features_list, -1) # torch.Tensor([batch # frames, 12*12, 1024])
+        image_features = self.get_model().mm_projector(image_features).to(dtype) # torch.Tensor([batch # frames, 12*12, LLM_hidden_size]), e.g. LLM_hidden_size = 3072 for Llama3.2 and 3584 for Qwen2
 
         if (getattr(self.config, "highres", False)) and input_mix_res:
             image_features_down = torch.cat(final_image_features_down_list, -1)
             image_features_down = (
                 self.get_model().mm_projector(image_features_down).to(dtype)
-            )
+            ) # torch.Tensor([batch # frames, 8*8, LLM_hidden_size])
 
         if IS_XLA_AVAILABLE:
             image_features = image_features.view(
@@ -1055,14 +1063,14 @@ class CambrianMetaForCausalLM(ABC):
             final_size = [(final_height, final_width)] * bs
 
         else:
-            image_features = image_features.view(bs, final_height, final_width, -1)
+            image_features = image_features.view(bs, final_height, final_width, -1) # torch.Tensor([batch # frames, 12, 12, LLM_hidden_size])
             if (getattr(self.config, "highres", False)) and input_mix_res:
                 image_features_down = image_features_down.view(
                     bs,
                     self.get_model().config.lowres_token,
                     self.get_model().config.lowres_token,
                     -1,
-                )
+                ) # torch.Tensor([batch # frames, 8, 8, LLM_hidden_size])
             image_features_unpadded = []
             image_features_downsample = []
             final_size = []
@@ -1075,16 +1083,19 @@ class CambrianMetaForCausalLM(ABC):
                 )
                 global_context_feature_final = []
             for batch_i in range(bs):
-                cur_image_feature = image_features[batch_i]
-                image_size = image_sizes[batch_i]
+                # logging.info(f"batch_i={batch_i}")
+                cur_image_feature = image_features[batch_i] # torch.Tensor([12, 12, LLM_hidden_size])
+                image_size = image_sizes[batch_i] # (360, 640)
 
                 cur_image_feature = unpad_image(
                     cur_image_feature.unsqueeze(0), image_size
-                )
+                ) # [1, 6, 12, LLM_hidden_size]
+                # logging.info(f"after unpad: cur_image_feature.shape={cur_image_feature.shape}")
 
-                cur_h, cur_w = cur_image_feature.shape[1:3]
+                cur_h, cur_w = cur_image_feature.shape[1:3] # 6, 12
                 try:  # fix bug for some invalid image
-                    cur_image_feature = cur_image_feature.view(1, cur_h, cur_w, -1)
+                    cur_image_feature = cur_image_feature.view(1, cur_h, cur_w, -1) # [1, 6, 12, LLM_hidden_size]
+                    # logging.info(f"after resize: cur_image_feature.shape={cur_image_feature.shape}")
                     final_size.append((cur_h, cur_w))
                 except:
                     # print(f"invalid after unpad {image_features[batch_i].shape}, {image_sizes[batch_i]}", flush=True)
@@ -1159,7 +1170,8 @@ class CambrianMetaForCausalLM(ABC):
                         .to(cur_image_feature.device),
                     ),
                     dim=2,
-                )
+                ) # [1, 6, 13, LLM_hidden_size]
+                # logging.info(f"after concat: cur_image_feature.shape={cur_image_feature.shape}")
 
                 if split_sizes is None and getattr(self.config, "frame_pos", False):
                     frame_pos = (
@@ -1170,23 +1182,23 @@ class CambrianMetaForCausalLM(ABC):
                     )
                     cur_image_feature += frame_pos
 
-                cur_image_feature = cur_image_feature.flatten(1, 2)
+                cur_image_feature = cur_image_feature.flatten(1, 2) # [1, 6*13, LLM_hidden_size]
                 image_features_unpadded.append(cur_image_feature.squeeze(0))
 
                 if self.get_model().config.mm_projector_type == "sva":
                     cur_global_context_feature = global_context_feature[batch_i].expand(
                         cur_h * cur_w, 1, -1
-                    )
+                    ) # [72, 1, 1024]
                     global_context_feature_final.append(cur_global_context_feature)
             if self.get_model().config.mm_projector_type == "sva":
                 global_context_feature_final = torch.cat(
                     global_context_feature_final, 0
-                )
+                ) # [batch # frames * 72, 1, 1024]
 
             if (getattr(self.config, "highres", False)) and input_mix_res:
                 image_features = image_features_downsample
             else:
-                image_features = image_features_unpadded
+                image_features = image_features_unpadded # [torch.Tensor([6*13, LLM_hidden_size]), ...] (len = batch # frames)
 
         # TODO: image start / end is not implemented here to support pretraining.
         if getattr(self.config, "tune_mm_mlp_adapter", False) and getattr(
@@ -1206,6 +1218,7 @@ class CambrianMetaForCausalLM(ABC):
             )
             start_idx = 0
             for split_batch_idx, split_size in enumerate(split_sizes):
+                # logging.info(f"Split video {split_batch_idx} into {split_size} frames")
                 if isinstance(image_features[start_idx : start_idx + split_size], list):
                     if getattr(self.config, "frame_pos", False):
                         frame_feature = torch.cat(
@@ -1228,6 +1241,8 @@ class CambrianMetaForCausalLM(ABC):
                                 dim=0,
                             )
                         )
+                        # logging.info(f"split_image_features[-1].shape={split_image_features[-1].shape}")
+                        # split_image_features[-1].shape: [# frames * 6 * 13, LLM_hidden_size]
                     if (getattr(self.config, "highres", False)) and input_mix_res:
                         if getattr(self.config, "frame_pos", False):
                             frame_feature = torch.cat(
@@ -1300,7 +1315,7 @@ class CambrianMetaForCausalLM(ABC):
                                 ]
                             )
                 start_idx += split_size
-            image_features = split_image_features
+            image_features = split_image_features # [tensor[vid1 # frames * 6 * 13, LLM_hidden_size], tensor[vid2 # frames * 6 * 13, LLM_hidden_size], ...]
             frame_split_sizes = split_sizes
 
         _labels = labels
@@ -1316,20 +1331,28 @@ class CambrianMetaForCausalLM(ABC):
             )
         if labels is None:
             labels = torch.full_like(input_ids, IGNORE_INDEX)
+        # logging.info(f"pre labels: {labels[..., :100]}")
 
         # remove the padding using attention_mask -- FIXME
         _input_ids = input_ids
 
         attention_mask = attention_mask | (input_ids == IMAGE_TOKEN_INDEX)
-
+        # logging.info(f"attention mask: {attention_mask[..., :100]}")
+        # logging.info("after masking")
         input_ids = [
             cur_input_ids[cur_attention_mask]
             for cur_input_ids, cur_attention_mask in zip(input_ids, attention_mask)
         ]
+        # for i, input_id in enumerate(input_ids):
+            # logging.info(f"input_ids[{i}].shape = {input_id.shape}")
+            # logging.info(f"input_ids[{i}][0:100] = {input_id[0:100]}")
         labels = [
             cur_labels[cur_attention_mask]
             for cur_labels, cur_attention_mask in zip(labels, attention_mask)
         ]
+        # for i, label in enumerate(labels):
+            # logging.info(f"labels[{i}].shape = {label.shape}")
+            # logging.info(f"labels[{i}][0:100] = {label[0:100]}")
 
         new_input_embeds = []
         new_labels = []
@@ -1616,28 +1639,28 @@ class CambrianMetaForCausalLM(ABC):
                         device=position_ids.device,
                     )
 
-        new_input_embeds = torch.stack(new_input_embeds_padded, dim=0)
+        new_input_embeds = torch.stack(new_input_embeds_padded, dim=0) # (B, largest vid # frames * 6 * 13, LLM hidden dim)
 
         if _labels is None:
             new_labels = None
         else:
-            new_labels = new_labels_padded
+            new_labels = new_labels_padded # (B, largest vid # frames * 6 * 13)
 
         if _attention_mask is None:
             attention_mask = None
         else:
-            attention_mask = attention_mask.to(dtype=_attention_mask.dtype)
+            attention_mask = attention_mask.to(dtype=_attention_mask.dtype) # (B, largest vid # frames * 6 * 13)
 
         if _position_ids is None:
             position_ids = None
 
         return (
             None,
-            position_ids,
-            attention_mask,
+            position_ids, # (B, largest vid # frames * 6 * 13)
+            attention_mask, # (B, largest vid # frames * 6 * 13)
             past_key_values,
-            new_input_embeds,
-            new_labels,
+            new_input_embeds, # (B, largest vid # frames * 6 * 13, LLM hidden dim)
+            new_labels, # (B, largest vid # frames * 6 * 13)
             vision_tower_aux_feature_list_final,
             vision_tower_aux_attention_masks_list_final,
             final_size,

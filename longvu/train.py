@@ -56,10 +56,16 @@ from torch.utils.tensorboard import SummaryWriter
 from transformers import TrainerCallback
 
 from transformers.integrations import TensorBoardCallback
+import logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(filename)s:%(lineno)d - %(funcName)s - %(levelname)s - %(message)s",
+)
 
 TENSORBOARD_LOG_DIR_NAME: str = "tensorboard_logs"
 
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:128"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:256"
+
 @dataclass
 class ModelArguments:
     input_model_filename: Optional[str] = field(default=None)
@@ -1113,11 +1119,12 @@ def train() -> None:
     )
 
     # pyre-fixme[16]: `DataClass` has no attribute `output_dir`.
-    if list(pathlib.Path(training_args.output_dir).glob("checkpoint-*")):
-        # pyre-fixme[16]: `LLaVATrainer` has no attribute `train`.
-        trainer.train(resume_from_checkpoint=True)
-    else:
-        trainer.train()
+    # if list(pathlib.Path(training_args.output_dir).glob("checkpoint-*")):
+    #     # pyre-fixme[16]: `LLaVATrainer` has no attribute `train`.
+    #     trainer.train(resume_from_checkpoint=True)
+    # else:
+    #     trainer.train()
+    trainer.train()
     # pyre-fixme[16]: `LLaVATrainer` has no attribute `save_state`.
     trainer.save_state()
 

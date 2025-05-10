@@ -226,6 +226,7 @@ class LLaVATrainer(Trainer):
         #     self.param_to_name = map_params_to_module_names([opt_model])
         # pyre-fixme[16]: `Trainer` has no attribute `optimizer`.
         if self.optimizer is None:
+            # ALL_LAYERNORM_LAYERS = [nn.LayerNorm]
             decay_parameters = get_parameter_names(opt_model, ALL_LAYERNORM_LAYERS)
             decay_parameters = [name for name in decay_parameters if "bias" not in name]
             # pyre-fixme[16]: `Trainer` has no attribute `mm_projector_lr`.

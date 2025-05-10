@@ -79,12 +79,15 @@ class CambrianLlamaModel(CambrianMetaModel, LlamaModel):
         global_context_feature: Optional[torch.Tensor] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
 
-        if inputs_embeds is not None:
-            logging.info(f"@tcm: In CambrianLlamaModel.forward(): inputs_embeds.shape: {inputs_embeds.shape}")
-        if position_ids is not None:
-            logging.info(f"@tcm: In CambrianLlamaModel.forward(): position_ids.shape: {position_ids.shape}")
-        if attention_mask is not None:
-            logging.info(f"@tcm: In CambrianLlamaModel.forward(): attention_mask.shape: {attention_mask.shape}")
+        # if inputs_embeds is not None:
+        #     logging.info(f"@tcm: In CambrianLlamaModel.forward(): inputs_embeds.shape: {inputs_embeds.shape}")
+        # if position_ids is not None:
+        #     logging.info(f"@tcm: In CambrianLlamaModel.forward(): position_ids.shape: {position_ids.shape}")
+        # if attention_mask is not None:
+        #     logging.info(f"@tcm: In CambrianLlamaModel.forward(): attention_mask.shape: {attention_mask.shape}")
+        # inputs_embeds.shape: [bs, seq_len, 3072], e.g. bs = 1 and seq_len = 1297
+        # position_ids.shape: [bs, seq_len]
+        # attention_mask.shape: [bs, seq_len]
 
         output_attentions = (
             output_attentions
@@ -195,7 +198,6 @@ class CambrianLlamaModel(CambrianMetaModel, LlamaModel):
         for i, decoder_layer in enumerate(self.layers):
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
-
             if self.gradient_checkpointing and self.training:
                 # pyre-fixme[16]: `CambrianLlamaModel` has no attribute
                 #  `_gradient_checkpointing_func`.
@@ -209,6 +211,7 @@ class CambrianLlamaModel(CambrianMetaModel, LlamaModel):
                     use_cache,
                 )
             else:
+                
                 layer_outputs = decoder_layer(
                     hidden_states,
                     attention_mask=attention_mask,
@@ -217,6 +220,7 @@ class CambrianLlamaModel(CambrianMetaModel, LlamaModel):
                     output_attentions=output_attentions,
                     use_cache=use_cache,
                 )
+            # layer_outputs[0].shape: [bs, seq_len, 3072], e.g. bs = 1 and seq_len = 1297
 
             hidden_states = layer_outputs[0]
 
@@ -293,6 +297,14 @@ class CambrianLlamaForCausalLM(LlamaForCausalLM, CambrianMetaForCausalLM):
     ) -> Union[Tuple, CausalLMOutputWithPast]:
 
         final_vision_feature_size = None
+        # if input_ids is not None:
+        #     logging.info(f"@tcm: In CambrianLlamaForCausalLM.forward(): input_ids.shape: {input_ids.shape}")
+        # if inputs_embeds is not None:
+        #     logging.info(f"@tcm: In CambrianLlamaForCausalLM.forward(): inputs_embeds.shape: {inputs_embeds.shape}")
+        # if labels is not None:
+        #     logging.info(f"@tcm: In CambrianLlamaForCausalLM.forward(): labels.shape: {labels.shape}")
+        # input_ids.shape: [bs, seq_len], e.g. bs = 1 and seq_len = 8192
+        # labels.shape: [bs, seq_len], e.g. bs = 1 and seq_len = 8192
 
         if inputs_embeds is None:
             (
@@ -434,7 +446,7 @@ class CambrianLlamaForCausalLM(LlamaForCausalLM, CambrianMetaForCausalLM):
                     # final_vision_feature_size=final_vision_feature_size,
                 )
 
-        hidden_states = outputs[0]
+        hidden_states = outputs[0] # outputs[0].shape: [bs, seq_len, 3072], e.g. bs = 1 and seq_len = 1297
         if self.config.pretraining_tp > 1:
             lm_head_slices = self.lm_head.weight.split(
                 self.vocab_size // self.config.pretraining_tp, dim=0
@@ -445,8 +457,9 @@ class CambrianLlamaForCausalLM(LlamaForCausalLM, CambrianMetaForCausalLM):
             ]
             logits = torch.cat(logits, dim=-1)
         else:
-            logits = self.lm_head(hidden_states)
+            logits = self.lm_head(hidden_states) # logits.shape: [bs, seq_len, vocab_size], e.g. bs = 1, seq_len = 1297, vocab_size = 128256
         logits = logits.float()
+        # logging.info(f"@tcm: In CambrianLlamaForCausalLM.forward(): logits.shape: {logits.shape}")
 
         loss = None
         if labels is not None:
